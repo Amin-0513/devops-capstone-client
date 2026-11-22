@@ -141,7 +141,26 @@ docker compose down
 
 ## Screenshots
 
-![Screenshot 1](images/01.png)
-![Screenshot 2](images/02.png)
-![Screenshot 3](images/03.png)
-![Screenshot 4](images/04.png)
+### 1. Building and starting the client
+
+Running `docker compose up -d --build` builds the image from `python:3.12-slim`, installs the dependencies, creates the `clientvol` volume and starts the `client` container.
+
+![Building and starting the client](images/01.png)
+
+### 2. Client web interface
+
+The Streamlit interface at `localhost:8501`. The sidebar sets the server host (`server`) and port (`5000`). The table lists the files already saved in `/clientdata`.
+
+![Client web interface](images/02.png)
+
+### 3. File received and checksum verified
+
+After you click **Fetch file from server**, the client receives a 1024-byte file and saves it to `/clientdata`. The expected and actual SHA-256 checksums match, which confirms the file is intact.
+
+![File received and checksum verified](images/03.png)
+
+### 4. Docker volumes
+
+`docker volume ls` shows the `clientvol` volume used by the client, alongside the server's `servervol` volume.
+
+![Docker volumes](images/04.png)
