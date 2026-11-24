@@ -179,8 +179,10 @@ Two EC2 instances are created in the `ap-southeast-2` (Sydney) region:
 
 | Name         | Purpose                         | AMI                 | Instance type |
 |--------------|---------------------------------|---------------------|---------------|
-| `saa-server` | Hosts the server container      | Ubuntu 22.04 (x86)  | `t2.micro`    |
-| `saa-client` | Hosts the client container      | Ubuntu 22.04 (x86)  | `t2.micro`    |
+| `saa-server` | Hosts the server container      | Ubuntu 22.04 (x86)  | `t3.micro`    |
+| `saa-client` | Hosts the client container      | Ubuntu 22.04 (x86)  | `t3.micro`    |
+
+> **Note:** The task asks for `t2.micro`, but this AWS account rejects it with *"The specified instance type is not eligible for Free Tier"*. On newer AWS accounts, `t3.micro` is the free tier instance type, so `t3.micro` is used instead.
 
 The server instance is created by the Terraform scripts in the server repository, and the client instance by the Terraform scripts in this repository (see 2c). The screenshots below show the same setup done manually in the AWS console.
 
@@ -203,7 +205,7 @@ Both instances are placed in the same VPC and subnet, so they can reach each oth
 | Setting          | Value                                                        |
 |------------------|--------------------------------------------------------------|
 | VPC              | `saa-vpc` (`10.0.0.0/16`)                                    |
-| Subnet           | `saa-public-subnet` (`10.0.1.0/24`) in `ap-southeast-2a`     |
+| Subnet           | `saa-public-subnet` in `ap-southeast-2a`                     |
 | Internet access  | `saa-igw` internet gateway and `saa-public-rt` route table   |
 | Auto-assign IP   | Enabled (public IP for SSH and the web interface)            |
 | Security group   | `saa-sg`, shared by both instances: SSH, server port, and all traffic inside the VPC |
@@ -279,7 +281,7 @@ variable "key_name" {
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
-  default     = "t2.micro"
+  default     = "t3.micro"
 }
 
 variable "ui_cidr" {
@@ -294,6 +296,18 @@ variable "server_port" {
   default     = 5000
 }
 
+variable "vpc_id" {
+  description = "VPC ID to use when more than one saa-vpc exists"
+  type        = string
+  default     = ""
+}
+
+variable "server_instance_id" {
+  description = "Server instance ID to use when more than one saa-server exists"
+  type        = string
+  default     = ""
+}
+
 variable "repo_url" {
   description = "Client GitHub repository"
   type        = string
@@ -306,7 +320,7 @@ variable "repo_url" {
 ```hcl
 region        = "ap-southeast-2"
 key_name      = "saa-key"
-instance_type = "t2.micro"
+instance_type = "t3.micro"
 server_port   = 5000
 ```
 
@@ -323,25 +337,36 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-data "aws_vpc" "saa_vpc" {
-  tags = { Name = "saa-vpc" }
-}
-
 data "aws_subnet" "saa_public_subnet" {
-  vpc_id = data.aws_vpc.saa_vpc.id
+  vpc_id = var.vpc_id != "" ? var.vpc_id : null
   tags   = { Name = "saa-public-subnet" }
 }
 
+locals {
+  vpc_id = data.aws_subnet.saa_public_subnet.vpc_id
+}
+
 data "aws_security_group" "saa_sg" {
-  vpc_id = data.aws_vpc.saa_vpc.id
+  vpc_id = local.vpc_id
   name   = "saa-sg"
 }
 
 data "aws_instance" "server" {
-  filter {
-    name   = "tag:Name"
-    values = ["saa-server"]
+  instance_id = var.server_instance_id != "" ? var.server_instance_id : null
+
+  dynamic "filter" {
+    for_each = var.server_instance_id == "" ? [1] : []
+    content {
+      name   = "tag:Name"
+      values = ["saa-server"]
+    }
   }
+
+  filter {
+    name   = "vpc-id"
+    values = [local.vpc_id]
+  }
+
   filter {
     name   = "instance-state-name"
     values = ["running"]
@@ -351,7 +376,7 @@ data "aws_instance" "server" {
 resource "aws_security_group" "saa_client_sg" {
   name        = "saa-client-sg"
   description = "Client web interface"
-  vpc_id      = data.aws_vpc.saa_vpc.id
+  vpc_id      = local.vpc_id
 
   ingress {
     description = "Streamlit"
@@ -445,6 +470,30 @@ terraform apply
 ```
 
 When it finishes, Terraform prints `client_url`. Open it in a browser to use the client.
+
+##### terraform init
+
+`terraform init` (Terraform v1.17.2) downloads the `hashicorp/aws` provider v5.100.0 and initializes the working directory.
+
+![terraform init](images/var1.png)
+
+##### terraform validate
+
+`terraform validate` confirms that the configuration is valid.
+
+![terraform validate](images/var2.png)
+
+##### terraform plan
+
+`terraform plan` finds the shared VPC created by the server repository and the server's private IP (`10.0.10.13`). It plans **2 to add**: the `saa-client-sg` security group and the `saa-client` EC2 instance.
+
+![terraform plan](images/var3.png)
+
+##### terraform apply
+
+`terraform apply` creates the client EC2 instance in about 33 seconds. The outputs show the client's private IP (`10.0.9.8`), its public IP, the `client_url` on port `8501`, and the server private IP (`10.0.10.13`) that the client container connects to. Both private IPs are in the same VPC, so the client can reach the server.
+
+![terraform apply](images/var4.png)
 
 #### Step 8: Destroy the resources when finished
 

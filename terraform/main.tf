@@ -8,25 +8,36 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-data "aws_vpc" "saa_vpc" {
-  tags = { Name = "saa-vpc" }
-}
-
 data "aws_subnet" "saa_public_subnet" {
-  vpc_id = data.aws_vpc.saa_vpc.id
+  vpc_id = var.vpc_id != "" ? var.vpc_id : null
   tags   = { Name = "saa-public-subnet" }
 }
 
+locals {
+  vpc_id = data.aws_subnet.saa_public_subnet.vpc_id
+}
+
 data "aws_security_group" "saa_sg" {
-  vpc_id = data.aws_vpc.saa_vpc.id
+  vpc_id = local.vpc_id
   name   = "saa-sg"
 }
 
 data "aws_instance" "server" {
-  filter {
-    name   = "tag:Name"
-    values = ["saa-server"]
+  instance_id = var.server_instance_id != "" ? var.server_instance_id : null
+
+  dynamic "filter" {
+    for_each = var.server_instance_id == "" ? [1] : []
+    content {
+      name   = "tag:Name"
+      values = ["saa-server"]
+    }
   }
+
+  filter {
+    name   = "vpc-id"
+    values = [local.vpc_id]
+  }
+
   filter {
     name   = "instance-state-name"
     values = ["running"]
@@ -36,7 +47,7 @@ data "aws_instance" "server" {
 resource "aws_security_group" "saa_client_sg" {
   name        = "saa-client-sg"
   description = "Client web interface"
-  vpc_id      = data.aws_vpc.saa_vpc.id
+  vpc_id      = local.vpc_id
 
   ingress {
     description = "Streamlit"
