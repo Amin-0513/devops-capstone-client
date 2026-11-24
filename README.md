@@ -464,6 +464,10 @@ output "grafana_url" {
 
 ```bash
 #!/bin/bash
+mkdir -p /etc/docker /etc/systemd/system/docker.service.d
+echo '{"features":{"containerd-snapshotter":false}}' > /etc/docker/daemon.json
+printf '[Service]\nEnvironment=DOCKER_MIN_API_VERSION=1.41\n' > /etc/systemd/system/docker.service.d/min-api.conf
+
 apt-get update -y
 apt-get install -y docker.io docker-compose-v2 git
 systemctl enable --now docker
@@ -756,9 +760,43 @@ terraform apply
 
 Wait 3 to 5 minutes for the VM to finish setting up, then open `grafana_url`.
 
+#### Docker 29 compatibility fix
+
+Ubuntu installs Docker 29, which breaks cAdvisor v0.49.1 in two ways, so the Docker dashboard showed **No data**:
+
+1. Docker 29 only accepts API version 1.44 or newer, but cAdvisor uses 1.41: *"client version 1.41 is too old"*.
+2. Docker 29 uses the containerd image store by default, and cAdvisor cannot find container layers in it: *"failed to identify the read-write layer ID"*.
+
+The startup script fixes both before Docker is installed, by allowing API 1.41 and switching Docker back to the classic `overlay2` storage:
+
+```bash
+echo '{"features":{"containerd-snapshotter":false}}' > /etc/docker/daemon.json
+printf '[Service]\nEnvironment=DOCKER_MIN_API_VERSION=1.41\n' > /etc/systemd/system/docker.service.d/min-api.conf
+```
+
 To run the monitoring stack on a machine by hand:
 
 ```bash
 cd monitoring
 GRAFANA_ADMIN_PASSWORD='your-password' docker compose up -d
 ```
+
+### Part 3 Verification
+
+#### Step 1: Deploy with Terraform
+
+`terraform apply` replaces the client VM because the startup script changed. It also updates `saa-client-sg` to open port `3020`. The outputs now include `grafana_url`.
+
+![terraform apply with Grafana](images/M1.png)
+
+#### Step 2: Grafana login on port 3020
+
+The Grafana login page opens over the internet at `http://<client-public-ip>:3020`. Log in with user `admin` and the password set during `terraform apply`.
+
+![Grafana login page](images/G1.png)
+
+#### Step 3: Host System Metrics dashboard
+
+After login, the **Host System Metrics** dashboard opens as the home page. It shows live data from Node Exporter: uptime, CPU, memory and root disk usage gauges, plus graphs of CPU, memory, network traffic and system load. It refreshes every 10 seconds.
+
+![Host System Metrics dashboard](images/G2.png)
