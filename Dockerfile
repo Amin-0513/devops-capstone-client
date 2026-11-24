@@ -2,6 +2,11 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1
 
+ARG APP_VERSION=local
+ARG BUILD_TIME="not built by CI"
+ENV APP_VERSION=$APP_VERSION
+ENV BUILD_TIME=$BUILD_TIME
+
 WORKDIR /app
 
 # Install dependencies

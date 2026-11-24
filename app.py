@@ -9,6 +9,8 @@ import streamlit as st
 SERVER_HOST = os.environ.get("SERVER_HOST", "server")
 SERVER_PORT = int(os.environ.get("SERVER_PORT", 5000))
 DATA_DIR = "/clientdata"
+APP_VERSION = os.environ.get("APP_VERSION", "local")
+BUILD_TIME = os.environ.get("BUILD_TIME", "not built by CI")
 
 
 # ---------- Networking logic ----------
@@ -53,8 +55,9 @@ def sha256(data):
 # ---------- User interface ----------
 
 st.set_page_config(page_title="File Transfer Client", page_icon="📦", layout="centered")
-st.title("📦 File Transfer Client")
+st.title("🚀 File Transfer Client: CI/CD Test")
 st.caption("Receives a file from the server container and verifies its integrity.")
+st.info(f"**Deployed version:** `{APP_VERSION}`  |  **Built:** {BUILD_TIME}")
 
 with st.sidebar:
     st.header("Server settings")
