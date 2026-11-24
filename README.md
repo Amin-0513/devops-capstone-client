@@ -279,3 +279,17 @@ sudo usermod -aG docker ubuntu
 ### Deploy
 
 Push a commit to `main`, or go to **Actions > CI/CD - client > Run workflow**.
+
+### Screenshots
+
+**Image pushed to Docker Hub:** the public repository `pda2/devops-capstone-client` has the `latest` tag and a `sha-<commit>` tag for each build.
+
+![Docker Hub tags](images/d23.png)
+
+**Slack notification:** after each deployment, CICDBot posts the result with the image tag, commit, author and a link to the run.
+
+![Slack notification](AWS_qwen_image/qw.png)
+
+**New version deployed automatically:** after changing the heading to "CI/CD Test Version 3" and pushing, the pipeline deployed the new image. The banner shows the deployed version `sha-4de1363`, which matches the pushed commit.
+
+![New version live](AWS_qwen_image/qw2.png)
