@@ -1,6 +1,8 @@
 services:
   client:
     build: .
+    # CI/CD replaces this line with the exact tag it pushed (e.g. :sha-1a2b3c4)
+    image: ${DOCKERHUB_USERNAME:-local}/devops-capstone-client:${IMAGE_TAG:-latest}
     container_name: client
     ports:
       - "8501:8501"

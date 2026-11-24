@@ -19,6 +19,8 @@ devops-capstone-client/
 ├── app.py               # Client application (Python + Streamlit)
 ├── Dockerfile           # Builds the client image
 ├── docker-compose.yml   # Defines and runs the client container
+├── .github/workflows/   # CI/CD pipeline (Part 4)
+├── ci/                  # Deploy and runner setup scripts (Part 4)
 ├── requirements.txt     # Python dependencies
 ├── terraform/           # Terraform scripts for the client EC2 instance
 ├── monitoring/          # Prometheus, Node Exporter, cAdvisor and Grafana
@@ -806,3 +808,80 @@ The Grafana login page opens over the internet at `http://<client-public-ip>:302
 After login, the **Host System Metrics** dashboard opens as the home page. It shows live data from Node Exporter: uptime, CPU, memory and root disk usage gauges, plus graphs of CPU, memory, network traffic and system load. It refreshes every 10 seconds.
 
 ![Host System Metrics dashboard](images/G2.png)
+
+---
+
+## Part 4: CI/CD Pipeline
+
+Every push to `main` builds a new client image, pushes it to Docker Hub, and deploys it to the client VM through a self-hosted GitHub Actions runner. Slack gets a message with the result.
+
+```
+push to main ──► build (GitHub-hosted) ──► push to Docker Hub ──► deploy (self-hosted runner on the client VM) ──► Slack
+                 py_compile + docker build    :sha-xxxxxxx + :latest   update tag in Compose, pull, up -d, health check
+```
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `.github/workflows/ci-cd.yml` | Pipeline: `build` → `deploy` → `notify` |
+| `ci/deploy.sh` | Runs on the VM: updates the image tag in Docker Compose, pulls, deploys, checks health, rolls back on failure |
+| `ci/setup-runner.sh` | Registers the VM as a private (self-hosted) runner and installs it as a service |
+
+### Jobs
+
+1. **build** (`ubuntu-latest`): checks the Python syntax, builds the image and pushes two tags to Docker Hub: `sha-<7-char commit>` and `latest`. Pull requests only build, they never push or deploy.
+2. **deploy** (`[self-hosted, client-vm]`): runs `ci/deploy.sh` on the VM. It copies `docker-compose.yml` to `~/deploy/client/`, replaces the `image:` line with the exact new tag (`image: docker.io/<user>/devops-capstone-client:sha-xxxxxxx`), runs `docker compose pull` and `docker compose up -d`, then waits for the health check (`curl http://localhost:8501/_stcore/health`). If the check fails it redeploys the last good tag.
+3. **notify** (`ubuntu-latest`): posts the result (image tag, commit, author, link to the run) to Slack through an incoming webhook. It runs even when an earlier job fails.
+
+### One-time setup
+
+**1. Docker Hub**: create a public repository `devops-capstone-client` and an access token (Account settings → Personal access tokens, Read & Write).
+
+**2. Slack**: create an app at api.slack.com/apps → Incoming Webhooks → On → Add New Webhook to Workspace, and pick a channel.
+
+**3. GitHub repository settings** (Settings → Secrets and variables → Actions):
+
+| Type | Name | Value |
+|------|------|-------|
+| Variable | `DOCKERHUB_USERNAME` | Your Docker Hub username |
+| Secret | `DOCKERHUB_TOKEN` | Docker Hub access token |
+| Secret | `SLACK_WEBHOOK_URL` | Slack incoming webhook URL |
+
+**4. Register the VM as a private runner.** In GitHub open Settings → Actions → Runners → New self-hosted runner → Linux and copy the token from the `config.sh` line (valid for one hour). Then on the client VM:
+
+```bash
+ssh -i saa-key.pem ubuntu@<client_public_ip>
+git clone https://github.com/Amin-0513/devops-capstone-client.git && cd devops-capstone-client
+bash ci/setup-runner.sh https://github.com/Amin-0513/devops-capstone-client <TOKEN> client-vm
+```
+
+The runner shows as **Idle** under Settings → Actions → Runners with the label `client-vm`.
+
+**5. Deploy**: push a commit to `main`, or open Actions → CI/CD - client → Run workflow.
+
+### Security note
+
+The repository is public, so the deploy job only runs for pushes to `main` and manual runs, never for pull requests. Also set Settings → Actions → General → "Require approval for all external contributors".
+
+### Check a deployment on the VM
+
+```bash
+grep image: ~/deploy/client/docker-compose.yml     # tag that is live now
+cat ~/deploy/client/.last_successful_tag
+docker ps --filter name=client
+sudo journalctl -u 'actions.runner.*' -n 50          # runner logs
+```
+
+### Part 4 Verification
+
+| Screenshot | What it shows |
+|-----------|----------------|
+| `images/cd01.png` | Runner `client-vm` online (Settings → Actions → Runners) |
+| `images/cd02.png` | Successful workflow run with build → deploy → notify |
+| `images/cd03.png` | Build job log pushing `sha-xxxxxxx` and `latest` |
+| `images/cd04.png` | Docker Hub repository showing the tags |
+| `images/cd05.png` | Deploy job log: tag updated in Compose, image pulled, health check passed |
+| `images/cd06.png` | On the VM: `grep image: ~/deploy/client/docker-compose.yml` and `docker ps` |
+| `images/cd07.png` | Slack message for the deployment |
+| `images/cd08.png` | Application still working after the deployment |
