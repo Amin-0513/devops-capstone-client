@@ -20,6 +20,8 @@ devops-capstone-client/
 ├── Dockerfile           # Builds the client image
 ├── docker-compose.yml   # Defines and runs the client container
 ├── requirements.txt     # Python dependencies
+├── terraform/           # Terraform scripts for the client EC2 instance
+├── monitoring/          # Prometheus, Node Exporter, cAdvisor and Grafana
 ├── images/              # Screenshots
 └── README.md
 ```
@@ -308,6 +310,12 @@ variable "server_instance_id" {
   default     = ""
 }
 
+variable "grafana_admin_password" {
+  description = "Grafana admin password"
+  type        = string
+  sensitive   = true
+}
+
 variable "repo_url" {
   description = "Client GitHub repository"
   type        = string
@@ -386,6 +394,14 @@ resource "aws_security_group" "saa_client_sg" {
     cidr_blocks = [var.ui_cidr]
   }
 
+  ingress {
+    description = "Grafana"
+    from_port   = 3020
+    to_port     = 3020
+    protocol    = "tcp"
+    cidr_blocks = [var.ui_cidr]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -408,10 +424,12 @@ resource "aws_instance" "client" {
   ]
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    server_ip   = data.aws_instance.server.private_ip
-    server_port = var.server_port
-    repo_url    = var.repo_url
+    server_ip        = data.aws_instance.server.private_ip
+    server_port      = var.server_port
+    repo_url         = var.repo_url
+    grafana_password = var.grafana_admin_password
   })
+  user_data_replace_on_change = true
 
   tags = { Name = "saa-client" }
 }
@@ -436,6 +454,10 @@ output "server_private_ip" {
 output "client_url" {
   value = "http://${aws_instance.client.public_ip}:8501"
 }
+
+output "grafana_url" {
+  value = "http://${aws_instance.client.public_ip}:3020"
+}
 ```
 
 #### user_data.sh.tftpl
@@ -454,6 +476,9 @@ git clone ${repo_url} /opt/client
 cd /opt/client
 docker network create filenet || true
 SERVER_HOST=${server_ip} SERVER_PORT=${server_port} docker compose up -d --build
+
+cd /opt/client/monitoring
+GRAFANA_ADMIN_PASSWORD='${grafana_password}' docker compose up -d
 ```
 
 #### Step 6: Apply the server Terraform first
@@ -508,3 +533,232 @@ terraform destroy
 The EC2 Instances page shows both VMs, `saa-server` and `saa-client`, in the **Running** state in the same availability zone (`ap-southeast-2a`). Each instance has its own public IPv4 DNS name, the server has passed all 3 status checks, and the EC2 service status is **Operating normally**.
 
 ![Verification of both EC2 instances](AWS_qwen_image/image.png)
+
+## Part 3: Setting up Monitoring Stack
+
+This part has 3 sub parts:
+
+- Set up a monitoring stack (e.g., Grafana) on each VM.
+- Make the Grafana dashboard accessible at port 3020 of each VM (over the internet, if using EC2 instances).
+- Create appropriate dashboards to view host system metrics and Docker container metrics.
+
+### 3a. Monitoring Stack
+
+The monitoring stack runs on the client VM with Docker Compose, from the [monitoring](monitoring/) directory.
+
+| Service         | Image                               | Purpose                                      |
+|-----------------|-------------------------------------|----------------------------------------------|
+| `prometheus`    | `prom/prometheus:v2.53.0`           | Collects and stores metrics every 15 seconds |
+| `node-exporter` | `prom/node-exporter:v1.8.1`         | Host system metrics (CPU, memory, disk, network) |
+| `cadvisor`      | `gcr.io/cadvisor/cadvisor:v0.49.1`  | Docker container metrics                     |
+| `grafana`       | `grafana/grafana:11.1.0`            | Dashboards, published on port `3020`         |
+
+```
+monitoring/
+├── docker-compose.yml
+├── prometheus/
+│   └── prometheus.yml
+└── grafana/
+    ├── provisioning/
+    │   ├── datasources/datasource.yml
+    │   └── dashboards/dashboards.yml
+    └── dashboards/
+        ├── host-metrics.json
+        └── docker-metrics.json
+```
+
+#### monitoring/docker-compose.yml
+
+```yaml
+name: monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=3d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: node-exporter
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    ports:
+      - "3020:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/host-metrics.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  monitoring:
+```
+
+#### monitoring/prometheus/prometheus.yml
+
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          host: client-vm
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          host: client-vm
+```
+
+#### Grafana provisioning
+
+Grafana is configured automatically when it starts: Prometheus is added as the default data source, and both dashboards are loaded into a **Monitoring** folder.
+
+```yaml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+```
+
+### 3b. Grafana on Port 3020
+
+Grafana listens on port `3000` inside the container, which is published as port `3020` on the VM. The client security group `saa-client-sg` in Terraform allows port `3020` from the internet:
+
+```hcl
+  ingress {
+    description = "Grafana"
+    from_port   = 3020
+    to_port     = 3020
+    protocol    = "tcp"
+    cidr_blocks = [var.ui_cidr]
+  }
+```
+
+The Terraform startup script starts the monitoring stack automatically when the VM boots:
+
+```bash
+cd /opt/client/monitoring
+GRAFANA_ADMIN_PASSWORD='${grafana_password}' docker compose up -d
+```
+
+The Grafana admin password is a sensitive Terraform variable (`grafana_admin_password`), so it is never stored in GitHub. Terraform asks for it when you run `terraform apply`.
+
+After `terraform apply`, Terraform prints `grafana_url`:
+
+```
+http://<client-public-ip>:3020
+```
+
+Log in with user `admin` and the password you entered.
+
+### 3c. Dashboards
+
+#### Host System Metrics
+
+Uses Node Exporter metrics to show the health of the VM:
+
+| Panel                  | Metric                                                     |
+|------------------------|------------------------------------------------------------|
+| Uptime                 | Time since the VM booted                                   |
+| CPU Usage              | Gauge and graph of total, user and system CPU              |
+| Memory Usage           | Gauge and graph of used, available and total memory        |
+| Root Disk Usage        | Percentage of the `/` filesystem in use                    |
+| Network Traffic        | Bytes received and transmitted per second                  |
+| System Load            | 1, 5 and 15 minute load averages                           |
+| Disk I/O               | Bytes read and written per second                          |
+
+#### Docker Container Metrics
+
+Uses cAdvisor metrics to show every running container (`client`, `grafana`, `prometheus`, `node-exporter`, `cadvisor`):
+
+| Panel                              | Metric                                          |
+|------------------------------------|-------------------------------------------------|
+| Running Containers                 | Number of running containers                    |
+| Total Container CPU / Memory       | CPU and memory used by all containers together  |
+| CPU Usage per Container            | CPU percentage of each container                |
+| Memory Usage per Container         | Memory used by each container                   |
+| Network Received / Transmitted     | Network traffic of each container               |
+| Containers                         | Table of each container with its image, CPU and memory |
+
+### Deploying the Monitoring Stack
+
+`user_data_replace_on_change = true` is set on the client instance, so changing the startup script makes Terraform replace the VM. The new VM installs Docker, starts the client and starts the monitoring stack.
+
+```bash
+cd terraform
+terraform apply
+```
+
+Wait 3 to 5 minutes for the VM to finish setting up, then open `grafana_url`.
+
+To run the monitoring stack on a machine by hand:
+
+```bash
+cd monitoring
+GRAFANA_ADMIN_PASSWORD='your-password' docker compose up -d
+```

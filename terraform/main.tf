@@ -57,6 +57,14 @@ resource "aws_security_group" "saa_client_sg" {
     cidr_blocks = [var.ui_cidr]
   }
 
+  ingress {
+    description = "Grafana"
+    from_port   = 3020
+    to_port     = 3020
+    protocol    = "tcp"
+    cidr_blocks = [var.ui_cidr]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -79,10 +87,12 @@ resource "aws_instance" "client" {
   ]
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    server_ip   = data.aws_instance.server.private_ip
-    server_port = var.server_port
-    repo_url    = var.repo_url
+    server_ip        = data.aws_instance.server.private_ip
+    server_port      = var.server_port
+    repo_url         = var.repo_url
+    grafana_password = var.grafana_admin_password
   })
+  user_data_replace_on_change = true
 
   tags = { Name = "saa-client" }
 }

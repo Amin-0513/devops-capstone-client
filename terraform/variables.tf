@@ -40,6 +40,12 @@ variable "server_instance_id" {
   default     = ""
 }
 
+variable "grafana_admin_password" {
+  description = "Grafana admin password"
+  type        = string
+  sensitive   = true
+}
+
 variable "repo_url" {
   description = "Client GitHub repository"
   type        = string

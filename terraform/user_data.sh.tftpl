@@ -11,3 +11,6 @@ git clone ${repo_url} /opt/client
 cd /opt/client
 docker network create filenet || true
 SERVER_HOST=${server_ip} SERVER_PORT=${server_port} docker compose up -d --build
+
+cd /opt/client/monitoring
+GRAFANA_ADMIN_PASSWORD='${grafana_password}' docker compose up -d

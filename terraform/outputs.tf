@@ -14,3 +14,7 @@ output "server_private_ip" {
 output "client_url" {
   value = "http://${aws_instance.client.public_ip}:8501"
 }
+
+output "grafana_url" {
+  value = "http://${aws_instance.client.public_ip}:3020"
+}
