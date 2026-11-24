@@ -809,9 +809,26 @@ After login, the **Host System Metrics** dashboard opens as the home page. It sh
 
 ![Host System Metrics dashboard](images/G2.png)
 
----
+## Part 4: Setting up CI/CD Pipelines
 
-## Part 4: CI/CD Pipeline
+This part has these requirements:
+
+- Create two separate Git repositories for the server and client codebases, if not done already.
+- Set up CI/CD pipelines for both repositories to ensure the following:
+  - Images are pushed to a public registry like Docker Hub.
+  - Configure the corresponding VMs as private Git runners.
+  - Update the image tag in Docker Compose, pull the new image, and deploy it as part of the CD process.
+- Integrate a Slack webhook (or another app of your choice) for deployment notifications.
+
+### 4a. Separate Repositories
+
+The client and server have separate GitHub repositories. This repository holds the client codebase:
+
+```
+https://github.com/Amin-0513/devops-capstone-client
+```
+
+### Pipeline Overview
 
 Every push to `main` builds a new client image, pushes it to Docker Hub, and deploys it to the client VM through a self-hosted GitHub Actions runner. Slack gets a message with the result.
 
@@ -831,7 +848,7 @@ push to main ──► build (GitHub-hosted) ──► push to Docker Hub ──
 ### Jobs
 
 1. **build** (`ubuntu-latest`): checks the Python syntax, builds the image and pushes two tags to Docker Hub: `sha-<7-char commit>` and `latest`. Pull requests only build, they never push or deploy.
-2. **deploy** (`[self-hosted, client-vm]`): runs `ci/deploy.sh` on the VM. It copies `docker-compose.yml` to `~/deploy/client/`, replaces the `image:` line with the exact new tag (`image: docker.io/<user>/devops-capstone-client:sha-xxxxxxx`), runs `docker compose pull` and `docker compose up -d`, then waits for the health check (`curl http://localhost:8501/_stcore/health`). If the check fails it redeploys the last good tag.
+2. **deploy** (`[self-hosted, saa_client]`): runs `ci/deploy.sh` on the VM. It copies `docker-compose.yml` to `~/deploy/client/`, replaces the `image:` line with the exact new tag (`image: docker.io/<user>/devops-capstone-client:sha-xxxxxxx`), runs `docker compose pull` and `docker compose up -d`, then waits for the health check (`curl http://localhost:8501/_stcore/health`). If the check fails it redeploys the last good tag.
 3. **notify** (`ubuntu-latest`): posts the result (image tag, commit, author, link to the run) to Slack through an incoming webhook. It runs even when an earlier job fails.
 
 ### One-time setup
@@ -848,17 +865,61 @@ push to main ──► build (GitHub-hosted) ──► push to Docker Hub ──
 | Secret | `DOCKERHUB_TOKEN` | Docker Hub access token |
 | Secret | `SLACK_WEBHOOK_URL` | Slack incoming webhook URL |
 
-**4. Register the VM as a private runner.** In GitHub open Settings → Actions → Runners → New self-hosted runner → Linux and copy the token from the `config.sh` line (valid for one hour). Then on the client VM:
+### Client VM as a Private GitHub Runner
+
+The client EC2 instance (`saa-client`) is registered as a self-hosted GitHub Actions runner for this repository. The CD job runs on this VM, so it can pull the new image and redeploy the client container.
+
+#### Step 1: Open the Runners page
+
+In the repository, go to **Settings > Actions > Runners**. At first, there are no runners configured.
+
+![No runners configured](images/cd1.png)
+
+#### Step 2: Get the runner setup commands
+
+Click **New self-hosted runner** and choose **Linux** and **x64**. GitHub shows the commands to download, configure and run the runner. The registration token is hidden in the screenshot because it is secret.
+
+![New self-hosted runner commands](images/cd2-redacted.png)
+
+The commands are run on the client VM over SSH:
 
 ```bash
-ssh -i saa-key.pem ubuntu@<client_public_ip>
-git clone https://github.com/Amin-0513/devops-capstone-client.git && cd devops-capstone-client
-bash ci/setup-runner.sh https://github.com/Amin-0513/devops-capstone-client <TOKEN> client-vm
+mkdir actions-runner && cd actions-runner
+curl -o actions-runner-linux-x64-2.338.2.tar.gz -L https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-x64-2.338.2.tar.gz
+tar xzf ./actions-runner-linux-x64-2.338.2.tar.gz
+./config.sh --url https://github.com/Amin-0513/devops-capstone-client --token <REGISTRATION_TOKEN>
 ```
 
-The runner shows as **Idle** under Settings → Actions → Runners with the label `client-vm`.
+#### Step 3: Configure the runner on the client VM
 
-**5. Deploy**: push a commit to `main`, or open Actions → CI/CD - client → Run workflow.
+`config.sh` connects to GitHub and registers the runner with the name `saa_client` and the extra label `saa_client`. The default labels are `self-hosted`, `Linux` and `X64`.
+
+![Runner configured on the client VM](images/cd3.png)
+
+The runner is then installed as a service, so it keeps running after the SSH session closes and after a reboot. The `ubuntu` user is added to the `docker` group so that pipeline jobs can run Docker commands:
+
+```bash
+sudo ./svc.sh install ubuntu
+sudo ./svc.sh start
+sudo usermod -aG docker ubuntu
+sudo ./svc.sh stop && sudo ./svc.sh start
+```
+
+#### Step 4: Runner online
+
+The Runners page shows `saa_client` with the labels `self-hosted`, `Linux`, `X64` and `saa_client`, and its status is **Idle**, which means it is online and waiting for jobs.
+
+![Runner saa_client idle](images/image.png)
+
+The CD job selects this runner with:
+
+```yaml
+runs-on: [self-hosted, saa_client]
+```
+
+### Deploy
+
+**4. Deploy**: push a commit to `main`, or open Actions → CI/CD - client → Run workflow.
 
 ### Security note
 
@@ -877,7 +938,6 @@ sudo journalctl -u 'actions.runner.*' -n 50          # runner logs
 
 | Screenshot | What it shows |
 |-----------|----------------|
-| `images/cd01.png` | Runner `client-vm` online (Settings → Actions → Runners) |
 | `images/cd02.png` | Successful workflow run with build → deploy → notify |
 | `images/cd03.png` | Build job log pushing `sha-xxxxxxx` and `latest` |
 | `images/cd04.png` | Docker Hub repository showing the tags |

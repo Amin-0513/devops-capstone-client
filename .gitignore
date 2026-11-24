@@ -3,3 +3,4 @@
 *.tfstate.*
 .terraform.lock.hcl
 crash.log
+images/cd2.png

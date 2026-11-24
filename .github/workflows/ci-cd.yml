@@ -58,7 +58,7 @@ jobs:
     needs: build
     # Never run pull requests (which may come from forks) on the private runner
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, client-vm]
+    runs-on: [self-hosted, saa_client]
     steps:
       - uses: actions/checkout@v4
 
