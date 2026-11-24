@@ -55,7 +55,7 @@ def sha256(data):
 # ---------- User interface ----------
 
 st.set_page_config(page_title="File Transfer Client", page_icon="📦", layout="centered")
-st.title("🚀 File Transfer Client: CI/CD Test aminamin")
+st.title("🚀 File Transfer Client: CI/CD Test Version 3")
 st.caption("Receives a file from the server container and verifies its integrity.")
 st.info(f"**Deployed version:** `{APP_VERSION}`  |  **Built:** {BUILD_TIME}")
 
