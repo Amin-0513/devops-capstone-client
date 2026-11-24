@@ -933,15 +933,3 @@ cat ~/deploy/client/.last_successful_tag
 docker ps --filter name=client
 sudo journalctl -u 'actions.runner.*' -n 50          # runner logs
 ```
-
-### Part 4 Verification
-
-| Screenshot | What it shows |
-|-----------|----------------|
-| `images/cd02.png` | Successful workflow run with build → deploy → notify |
-| `images/cd03.png` | Build job log pushing `sha-xxxxxxx` and `latest` |
-| `images/cd04.png` | Docker Hub repository showing the tags |
-| `images/cd05.png` | Deploy job log: tag updated in Compose, image pulled, health check passed |
-| `images/cd06.png` | On the VM: `grep image: ~/deploy/client/docker-compose.yml` and `docker ps` |
-| `images/cd07.png` | Slack message for the deployment |
-| `images/cd08.png` | Application still working after the deployment |
