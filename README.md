@@ -453,3 +453,9 @@ Destroy the client first, then the server, because the server owns the shared ne
 ```bash
 terraform destroy
 ```
+
+### Verification
+
+The EC2 Instances page shows both VMs, `saa-server` and `saa-client`, in the **Running** state in the same availability zone (`ap-southeast-2a`). Each instance has its own public IPv4 DNS name, the server has passed all 3 status checks, and the EC2 service status is **Operating normally**.
+
+![Verification of both EC2 instances](AWS_qwen_image/image.png)
