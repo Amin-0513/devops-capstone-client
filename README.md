@@ -538,6 +538,12 @@ The EC2 Instances page shows both VMs, `saa-server` and `saa-client`, in the **R
 
 ![Verification of both EC2 instances](AWS_qwen_image/image.png)
 
+#### Client and server communication on EC2
+
+The client web interface is opened over the internet at `http://<client-public-ip>:8501`. Server host is set to the server VM's private IP (`10.0.10.13`) and port `5000`. After you click **Fetch file from server**, the client receives a 1024-byte file from the server VM and saves it to `/clientdata`. The expected and actual SHA-256 checksums match, which confirms that the two EC2 instances communicate inside the VPC and the file arrived intact.
+
+![Client receiving a file from the server VM on EC2](images/UI.png)
+
 ## Part 3: Setting up Monitoring Stack
 
 This part has 3 sub parts:
